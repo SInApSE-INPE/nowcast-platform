@@ -34,6 +34,7 @@ import pytest
 
 from . import __version__
 from .acquisition import DataNotReady
+from .artifacts import MissingArtifact
 from .composition import Deployment
 from .ports import Frame, Prediction
 
@@ -70,7 +71,18 @@ class ConformanceSuite:
 
     @pytest.fixture
     def deployment(self, tmp_path) -> Deployment:
-        return self.build(tmp_path)
+        """The deployment under test, or a skip when its bundle was never fetched.
+
+        Weights are kept out of version control, so a fresh clone cannot build
+        the deployment at all. That is an absent prerequisite rather than a
+        broken contract, and reporting it as an error per check buries the real
+        ones. Only absence skips: a file that is present with the wrong checksum
+        still fails.
+        """
+        try:
+            return self.build(tmp_path)
+        except MissingArtifact as exc:
+            pytest.skip(f"bundle files are not present: {exc}")
 
     @pytest.fixture
     def loaded(self, deployment):

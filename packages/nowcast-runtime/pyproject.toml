@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nowcast-runtime"
-version = "0.3.1"
+version = "0.3.2"
 description = "Operational runtime for scheduled, auditable gridded nowcast publication"
 requires-python = ">=3.11,<3.14"
 # No deep learning framework: no port mentions one, and nothing here imports
@@ -23,3 +23,5 @@ packages = ["src/nowcast_runtime"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Kept in step with the workspace root, so the suite behaves the same from either.
+addopts = ["-p", "pytester"]

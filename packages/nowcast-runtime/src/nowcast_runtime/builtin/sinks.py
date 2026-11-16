@@ -55,7 +55,12 @@ class GeoTiffSink:
         missing = prediction.missing[member]
         if values.shape[1:] != grid.shape:
             raise ValueError("Output dimensions differ from the configured grid")
-        if not np.isfinite(values).all() or (values < 0).any():
+        # Only cells that will be published are checked. A masked cell is
+        # replaced by NoData below, and a model fed a gap may well leave NaN or
+        # a negative there; refusing the whole lead for that would discard a
+        # valid forecast over a value nobody will ever read.
+        published = values[~missing]
+        if not np.isfinite(published).all() or (published < 0).any():
             raise ValueError("Output values must be finite and nonnegative")
         data = np.where(missing, self.nodata, values).astype(np.float32)
         with rasterio.open(

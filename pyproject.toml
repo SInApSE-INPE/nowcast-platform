@@ -37,3 +37,6 @@ known-first-party = ["nowcast_runtime", "inceptionv4_nowcast"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/nowcast-runtime/tests"]
+# pytester lets a test run the conformance suite as a model project would and
+# assert on its outcomes (passed, skipped, errors), not only on its internals.
+addopts = ["-p", "pytester"]

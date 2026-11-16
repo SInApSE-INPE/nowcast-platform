@@ -338,7 +338,13 @@ class Transform(Protocol):
 
 @runtime_checkable
 class Predictor(Protocol):
-    """A loaded model, ready to infer on one fixed grid."""
+    """A loaded model, ready to infer on one fixed grid.
+
+    A predictor may also expose a `device` attribute naming where it was placed
+    (anything whose `str()` reads as `cpu` or `cuda:0`). It is optional, so it is
+    not declared below: when present the run manifest records it as the resolved
+    device, and when absent the manifest can only repeat what was requested.
+    """
 
     @property
     def window(self) -> WindowSpec:

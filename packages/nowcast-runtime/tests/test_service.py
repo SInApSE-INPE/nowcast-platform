@@ -58,3 +58,24 @@ def test_failed_poll_retries_on_next_interval():
     service.run_loop(stop, 60, lambda: 0, poll)
     assert len(polls) == 2
     assert stop.waits == [60, 60]
+
+
+def test_a_deployment_names_its_own_sources():
+    from nowcast_runtime import pipeline
+
+    cli = pipeline.parser("demo", "Demo", sources=("local", "api"))
+    assert cli.parse_args(["--config", "c.json", "--source", "api"]).source == "api"
+    with pytest.raises(SystemExit):
+        cli.parse_args(["--config", "c.json", "--source", "ftp"])
+    assert pipeline.parser("demo", "Demo").parse_args(["--config", "c.json"]).source == "local"
+    with pytest.raises(ValueError, match="local"):
+        pipeline.parser("demo", "Demo", sources=("api",))
+
+
+def test_scheduling_refuses_supplied_inputs_whatever_the_remote_is_called():
+    from nowcast_runtime import pipeline, scheduler
+
+    cli = pipeline.parser("demo", "Demo", sources=("local", "api"))
+    args = cli.parse_args(["--config", "c.json", "--source", "local", "--scheduled"])
+    with pytest.raises(ValueError, match="remote --source"):
+        scheduler.poll_once(args, compose=None)

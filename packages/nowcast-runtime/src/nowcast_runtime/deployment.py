@@ -47,7 +47,7 @@ def render_units(
         f"--config {config} --source ftp --scheduled"
     )
     service = f"""[Unit]
-Description=Acquire GSMaP NOW and publish new {model_name} forecasts
+Description=Acquire new observations and publish {model_name} forecasts
 
 [Service]
 Type=oneshot

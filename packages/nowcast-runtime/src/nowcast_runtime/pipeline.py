@@ -14,6 +14,7 @@ import logging
 import math
 import os
 import tempfile
+from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -35,10 +36,23 @@ def default_cache_dir(slug: str) -> Path:
     return Path(tempfile.gettempdir()) / f"nowcasting{user}" / slug
 
 
-def parser(slug: str, name: str) -> argparse.ArgumentParser:
+# What `--source` accepts unless a deployment names its own. `local` is the one
+# every deployment has; anything else is a remote the composition root knows.
+SOURCES = ("local", "ftp")
+
+
+def parser(slug: str, name: str, sources: Sequence[str] = SOURCES) -> argparse.ArgumentParser:
+    """The command line every deployment shares.
+
+    `sources` is the deployment's own list of `--source` choices, so a model
+    whose observations come over something other than FTP names it here rather
+    than passing for FTP.
+    """
+    if "local" not in sources:
+        raise ValueError("Every deployment accepts --source local")
     cli = argparse.ArgumentParser(description=f"{name} gridded forecasts to files (UTC)")
     cli.add_argument("--config", type=Path, required=True)
-    cli.add_argument("--source", choices=("local", "ftp"), default="local")
+    cli.add_argument("--source", choices=tuple(sources), default="local")
     cli.add_argument("--input-dir", type=Path, help="Directory of supplied inputs (recursive)")
     cli.add_argument(
         "--cache-dir",
@@ -96,6 +110,18 @@ def prune(deployment: Deployment, args: argparse.Namespace) -> None:
         LOG.info("Removed %d expired input files from %s", removed, args.cache_dir)
 
 
+def resolved_device(deployment: Deployment, predictor) -> str:
+    """The device the model reports it is on, or the request when it reports none.
+
+    A request such as `auto` is resolved by the model, since only the model
+    knows its framework. A predictor exposing a `device` attribute lets the
+    manifest record where the run really happened; one without it leaves the
+    request as the only thing known.
+    """
+    reported = getattr(predictor, "device", None)
+    return deployment.device if reported is None else str(reported)
+
+
 def apply_stages(payload, stages):
     for stage in stages:
         payload = stage.apply(payload)
@@ -113,7 +139,9 @@ def run(args: argparse.Namespace, deployment: Deployment, product: str) -> Path:
         raise ValueError(f"Requested {steps} leads exceeds native horizon {predictor.output_steps}")
     if predictor.grid != deployment.grid:
         raise ValueError("Model was loaded for a grid other than the deployment grid")
-    LOG.info("Model ready on %s; %s input steps", deployment.device, len(window))
+    LOG.info(
+        "Model ready on %s; %s input steps", resolved_device(deployment, predictor), len(window)
+    )
 
     observations = select_window(
         catalog(deployment.source, deployment.decoder, window, args.run_time),
@@ -222,7 +250,8 @@ def manifest(args, deployment, loaded, observations, paths, fractions, missing, 
         "units": deployment.units,
         "crs": deployment.grid.crs,
         "grid": asdict(deployment.grid),
-        "device": deployment.device,
+        "device": resolved_device(deployment, loaded.predictor),
+        "device_requested": deployment.device,
         "cache_ttl_hours": args.cache_ttl_hours,
         "versions": {
             "nowcast-runtime": __version__,
@@ -251,9 +280,9 @@ def manifest(args, deployment, loaded, observations, paths, fractions, missing, 
     }
 
 
-def main(compose, slug: str, name: str, argv=None) -> int:
+def main(compose, slug: str, name: str, argv=None, sources: Sequence[str] = SOURCES) -> int:
     """compose(args) builds the Deployment; nothing here knows a concrete adapter."""
-    args = parser(slug, name).parse_args(argv)
+    args = parser(slug, name, sources).parse_args(argv)
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",

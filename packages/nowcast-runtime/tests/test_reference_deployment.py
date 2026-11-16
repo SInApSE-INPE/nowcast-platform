@@ -19,6 +19,7 @@ InceptionV4.
 """
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -26,7 +27,7 @@ import numpy as np
 import pytest
 import rasterio
 
-from nowcast_runtime.artifacts import sha256, verify_bundle
+from nowcast_runtime.artifacts import MissingArtifact, sha256, verify_bundle
 from nowcast_runtime.builtin.decoders import RawBinaryDecoder, TimestampedName
 from nowcast_runtime.builtin.sinks import GeoTiffSink
 from nowcast_runtime.builtin.sources import LocalFiles
@@ -128,6 +129,30 @@ class TestReferenceDeployment(ConformanceSuite):
 
     # The checks below are specific to this deployment, not part of the contract.
 
+    def test_a_predictor_reporting_no_device_records_the_request(
+        self, deployment, populated, outputs
+    ):
+        target = self.run(replace(deployment, device="auto"), outputs)
+        manifest = json.loads((target / "manifest.json").read_text())
+        assert manifest["device"] == "auto"
+        assert manifest["device_requested"] == "auto"
+
+    def test_the_manifest_records_the_device_the_model_resolved(
+        self, deployment, populated, outputs
+    ):
+        class Placed(Spread):
+            device = "cuda:0"
+
+        placed = replace(
+            deployment,
+            device="auto",
+            plugin=replace(PLUGIN, load=lambda artifacts, device, grid: Placed()),
+        )
+        target = self.run(placed, outputs)
+        manifest = json.loads((target / "manifest.json").read_text())
+        assert manifest["device"] == "cuda:0"
+        assert manifest["device_requested"] == "auto"
+
     def test_a_plugin_without_a_transform_records_identity(self, deployment, populated, outputs):
         target = self.run(deployment, outputs)
         manifest = json.loads((target / "manifest.json").read_text())
@@ -162,8 +187,6 @@ class TestReferenceDeployment(ConformanceSuite):
                 np.testing.assert_allclose(dataset.read(2), expected, atol=1e-6)
 
     def test_an_output_width_other_than_declared_is_refused(self, deployment, populated, outputs):
-        from dataclasses import replace
-
         class Narrow(Spread):
             def leads(self, inputs, steps):
                 for _ in range(steps):
@@ -175,3 +198,63 @@ class TestReferenceDeployment(ConformanceSuite):
         )
         with pytest.raises(ValueError, match="for a lead, expected"):
             self.run(narrowed, outputs)
+
+
+def write_bundle(directory: Path, present: bool, digest: str | None = None) -> None:
+    directory.mkdir()
+    weights = directory / "weights.npy"
+    np.save(weights, np.zeros(1, dtype=np.float32))
+    recorded = digest or sha256(weights)
+    if not present:
+        weights.unlink()
+    (directory / "manifest.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "version": "v1",
+                "files": {"weights": {"name": weights.name, "sha256": recorded}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_an_absent_bundle_file_is_named_and_distinct_from_a_bad_checksum(tmp_path):
+    write_bundle(tmp_path / "absent", present=False)
+    with pytest.raises(MissingArtifact, match=r"weights\.npy \(role weights\)"):
+        verify_bundle(tmp_path / "absent", ("weights",))
+
+    write_bundle(tmp_path / "wrong", present=True, digest="0" * 64)
+    with pytest.raises(ValueError, match="checksum mismatch") as caught:
+        verify_bundle(tmp_path / "wrong", ("weights",))
+    assert not isinstance(caught.value, MissingArtifact)
+
+
+CONFORMANCE_OVER_A_BUNDLE = """
+from pathlib import Path
+
+from nowcast_runtime.artifacts import verify_bundle
+from nowcast_runtime.testing import ConformanceSuite
+
+
+class TestBundle(ConformanceSuite):
+    def build(self, tmp_path):
+        verify_bundle(Path({bundle!r}), ("weights",))
+        raise AssertionError("unreachable: the bundle cannot verify")
+"""
+
+
+@pytest.mark.parametrize(
+    ("present", "outcome"),
+    [(False, "skipped"), (True, "errors")],
+    ids=["absent-skips", "corrupt-still-errors"],
+)
+def test_conformance_skips_only_when_the_bundle_was_never_fetched(
+    pytester, tmp_path, present, outcome
+):
+    """A fresh clone has no weights; that is a skip. A wrong file is still an error."""
+    bundle = tmp_path / "bundle"
+    write_bundle(bundle, present=present, digest=None if not present else "0" * 64)
+    pytester.makepyfile(CONFORMANCE_OVER_A_BUNDLE.format(bundle=str(bundle)))
+    result = pytester.runpytest_inprocess("-k", "units_are_declared")
+    result.assert_outcomes(**{outcome: 1})

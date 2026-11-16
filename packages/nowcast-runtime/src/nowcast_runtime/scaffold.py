@@ -537,6 +537,12 @@ deploy/generated/
 """
 
 
+# The interpreter the generated Dockerfile builds on. Without it uv picks the
+# newest Python the version range allows, so a local run and the container
+# quietly test different interpreters.
+PYTHON_VERSION = "3.12\n"
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -566,6 +572,7 @@ def render(plan: Plan) -> dict[str, str]:
         "Dockerfile": DOCKERFILE.substitute(values),
         "compose.yaml": COMPOSE.substitute(values),
         ".gitignore": GITIGNORE,
+        ".python-version": PYTHON_VERSION,
         "config/default.json": CONFIG.substitute(values),
         f"src/{plan.package}/__init__.py": INIT.substitute(values),
         f"src/{plan.package}/__main__.py": MAIN.substitute(values),

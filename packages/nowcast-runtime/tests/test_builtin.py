@@ -257,6 +257,29 @@ def test_geotiff_refuses_a_negative_or_non_finite_field(tmp_path):
         sink.write(tmp_path / "bad.tif", prediction, 0, SMALL, "mm/h", {})
 
 
+def test_geotiff_ignores_what_a_masked_cell_holds(tmp_path):
+    """A masked cell becomes NoData, so NaN or a negative there is not output."""
+    rasterio = pytest.importorskip("rasterio")
+    sink = GeoTiffSink()
+    field = np.ones((1, 1, 3, 4), dtype=np.float32)
+    field[0, 0, 0, 0] = np.nan
+    field[0, 0, 0, 1] = -5.0
+    mask = np.zeros_like(field, dtype=bool)
+    mask[0, 0, 0, :2] = True
+    when = datetime(2000, 1, 2, 1, tzinfo=UTC)
+    path = tmp_path / "masked.tif"
+    sink.write(path, Prediction(field, mask, 1, when), 0, SMALL, "mm/h", {})
+    with rasterio.open(path) as dataset:
+        band = dataset.read(1)
+    assert (band[0, :2] == sink.nodata).all()
+    assert (band[0, 2:] == 1).all()
+
+    # The same values outside the mask are still refused.
+    mask[0, 0, 0, 1] = False
+    with pytest.raises(ValueError, match="finite and nonnegative"):
+        sink.write(tmp_path / "bad.tif", Prediction(field, mask, 1, when), 0, SMALL, "mm/h", {})
+
+
 # --- sources ----------------------------------------------------------------
 
 

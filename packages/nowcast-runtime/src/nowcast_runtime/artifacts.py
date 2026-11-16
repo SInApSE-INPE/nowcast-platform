@@ -10,6 +10,16 @@ from pathlib import Path
 BLOCK = 1024 * 1024
 
 
+class MissingArtifact(FileNotFoundError):
+    """A file the manifest declares is not in the bundle directory.
+
+    Distinct from a checksum mismatch on purpose. Weights are large and kept out
+    of version control, so a fresh clone lacks them by design and the remedy is
+    to download or prepare the bundle. A file that is present and wrong is
+    corruption or tampering, and stays a plain error.
+    """
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -39,6 +49,11 @@ def verify_bundle(directory: Path, roles: Sequence[str]) -> tuple[dict, dict[str
         path = (directory / item["name"]).resolve()
         if path.parent != directory.resolve():
             raise ValueError("Artifact files must be inside their bundle directory")
+        if not path.is_file():
+            raise MissingArtifact(
+                f"Artifact file is not present: {item['name']} (role {role}) in {directory}; "
+                "download or prepare the bundle first"
+            )
         if sha256(path) != item["sha256"]:
             raise ValueError(f"Artifact checksum mismatch: {role}")
         paths[role] = path

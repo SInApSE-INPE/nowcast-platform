@@ -63,6 +63,7 @@ def test_a_generated_project_is_complete_and_declares_itself(tmp_path):
         "pyproject.toml",
         "README.md",
         "Dockerfile",
+        ".python-version",
         "compose.yaml",
         "config/default.json",
         "tests/test_conformance.py",

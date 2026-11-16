@@ -53,8 +53,8 @@ def completed_run(
 
 def poll_once(args: argparse.Namespace, compose) -> Path | None:
     validate_runtime(args)
-    if args.source != "ftp" or args.run_time is not None:
-        raise ValueError("--scheduled requires --source ftp and no --run-time")
+    if args.source == "local" or args.run_time is not None:
+        raise ValueError("--scheduled requires a remote --source and no --run-time")
     deployment, product = compose(args)
     if getattr(deployment.source, "templated", False):
         raise ValueError("--scheduled requires a latest directory, not an archive template")
