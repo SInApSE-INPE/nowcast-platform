@@ -17,10 +17,22 @@ ROW0, COLUMN0 = 270, 2400
 SIZE = 128
 
 
+CHECKPOINT = PROJECT / "artifacts/v1/inceptionv4.pth"
+# The weights are 300 MB and kept out of Git, so a fresh clone has none until
+# inceptionv4-download-artifacts has run. Absent is a skip with the remedy in
+# it; present but wrong still fails, in verify_bundle.
+requires_checkpoint = pytest.mark.skipif(
+    not CHECKPOINT.is_file(),
+    reason="inceptionv4.pth is not present; run: uv run inceptionv4-download-artifacts",
+)
+
+
 @pytest.fixture(scope="session")
 def module():
+    if not CHECKPOINT.is_file():
+        pytest.skip("inceptionv4.pth is not present; run: uv run inceptionv4-download-artifacts")
     torch.set_num_threads(2)
-    return load_module(PROJECT / "artifacts/v1/inceptionv4.pth", (SIZE, SIZE))
+    return load_module(CHECKPOINT, (SIZE, SIZE))
 
 
 @pytest.fixture

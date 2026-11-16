@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 import rasterio
 import torch
+from conftest import requires_checkpoint
 
 from inceptionv4_nowcast.entrypoint import NAME, PLUGIN, SLUG, parser, run
 from inceptionv4_nowcast.model import InceptionV4Predictor, PrecipitationForecaster, load_module
@@ -96,6 +97,7 @@ def test_bundle_contains_only_inference_weights():
     assert manifest["source_checkpoint"]["sha256"] == sha256(PROJECT / "reference/best_model.pth")
 
 
+@requires_checkpoint
 def test_bundle_verification_checks_only_declared_roles():
     manifest, paths = verify_bundle(PROJECT / "artifacts/v1", PLUGIN.bundle_roles)
     assert set(paths) == set(PLUGIN.bundle_roles)
