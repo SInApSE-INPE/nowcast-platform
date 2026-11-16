@@ -164,7 +164,7 @@ def load_model(
 ) -> IrenePredictor:
     """Build the predictor, reading tensors only.
 
-    The bundle holds weights extracted by ``tools/prepare_artifacts.py``, so
+    The bundle holds weights extracted by ``irene_nowcast.weights``, so
     this never unpickles anything but tensors. The published 770 MB Lightning
     checkpoint cannot be read that way, which is the reason the extraction step
     exists.

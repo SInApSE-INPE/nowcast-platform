@@ -8,7 +8,7 @@
   },
   "model_latitude_order": "north_to_south",
   "product": "dpc_sri",
-  "remote_directory": "/unused-local-only",
+  "remote_directory": "SRI",
   "missing_policy": "zero_rain",
   "max_missing_fraction": 0.95,
   "ftp": {

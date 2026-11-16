@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 from dataclasses import replace
 from datetime import timedelta
-from pathlib import Path
 
 from nowcast_runtime import pipeline, service
 from nowcast_runtime.artifacts import verify_bundle
@@ -18,25 +18,40 @@ from nowcast_runtime.config import Config
 from nowcast_runtime.ports import Grid, ModelPlugin
 
 from . import __version__
-from .decoder import RadarNetcdf
+from .decoder import EitherFormat, RadarGeoTiff, RadarNetcdf
 from .model import OUTPUT_CEILING, OUTPUT_FLOOR, library_versions, load_model, transform
+from .source import DpcRadarApi
 from .stages import Threshold
 
 NAME = "IRENE"
 SLUG = "irene"
 CONFIG = "config/default.json"
-POLL_ARGS = ["--config", CONFIG, "--source", "ftp", "--scheduled", "--output-dir", "outputs"]
+BUNDLE = "artifacts/v1"
+# `dpc` is the DPC open-data API; there is no FTP feed for this product.
+SOURCES = ("local", "dpc")
+# A scan is published about seven minutes after its nominal time and replaced
+# by the next one five minutes later, so a window an hour old means the feed
+# has stalled, and forecasting from it would be issuing the past.
+POLL_ARGS = [
+    "--config", CONFIG,
+    "--source", "dpc",
+    "--scheduled",
+    "--output-dir", "outputs",
+    "--max-age-hours", "1",
+]  # fmt: skip
+# How often the container asks whether a new scan exists. Scans arrive every
+# five minutes; asking every minute bounds the delay between a scan appearing
+# and its forecast starting, and an unchanged answer costs one small request.
+POLL_INTERVAL_SECONDS = 60
 
-# The DPC mosaic as published: 1 km cells on a projected metre grid, rows north
-# first. Coordinates in the sample are cell centres, so the outer corner is half
-# a cell beyond: x starts at -599500, the grid origin at -600000.
-#
-# The CRS is an ASSERTION, not a fact. The sample carries grid_mapping = "crs"
-# and contains no such variable, so the projection is not determinable from the
-# data. It is declared here so it reaches the manifest and can be contradicted,
-# rather than being left implicit.
-ASSUMED_CRS = "EPSG:3003"
-NATIVE_GRID = Grid(ASSUMED_CRS, -600000.0, 650000.0, 1000.0, 1000.0, 1200, 1400)
+# The projection the DPC mosaic is published in: a transverse Mercator centred
+# on Italy, on WGS 84, with no false origin. It has no EPSG code, so it is
+# written out. This is read from the GeoTIFFs the DPC API serves, and
+# `RadarGeoTiff` re-checks it against every scan it opens.
+DPC_CRS = "+proj=tmerc +lat_0=42 +lon_0=12.5 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+# 1 km cells, rows north first, 1200 x 1400. The NetCDF sample gives cell
+# centres, so its first x is -599500 for this outer corner of -600000.
+NATIVE_GRID = Grid(DPC_CRS, -600000.0, 650000.0, 1000.0, 1000.0, 1200, 1400)
 
 PLUGIN = ModelPlugin(
     name=NAME,
@@ -56,8 +71,21 @@ PLUGIN = ModelPlugin(
 )
 
 
-def decoder() -> RadarNetcdf:
-    """One NetCDF per five-minute scan, variable RR, rain rate in mm/h."""
+def geotiff() -> RadarGeoTiff:
+    """One GeoTIFF per five-minute scan, as the DPC API serves it."""
+    return RadarGeoTiff(
+        native_grid=NATIVE_GRID,
+        naming=TimestampedName(
+            pattern=r"dpc_sri\.(?P<stamp>\d{12})\.tif",
+            stamp_format="%Y%m%d%H%M",
+            template="dpc_sri.%Y%m%d%H%M.tif",
+        ),
+        units="mm/h",
+    )
+
+
+def netcdf() -> RadarNetcdf:
+    """One NetCDF per scan, variable RR: the sample published with the model."""
     return RadarNetcdf(
         native_grid=NATIVE_GRID,
         naming=TimestampedName(
@@ -70,6 +98,11 @@ def decoder() -> RadarNetcdf:
     )
 
 
+def decoder() -> EitherFormat:
+    """Both formats of the mosaic; the operational GeoTIFF is the primary one."""
+    return EitherFormat((geotiff(), netcdf()))
+
+
 def compose(args: argparse.Namespace) -> tuple[Deployment, str]:
     config = Config.load(args.config)
     reader = decoder()
@@ -80,9 +113,16 @@ def compose(args: argparse.Namespace) -> tuple[Deployment, str]:
             raise ValueError("--source local requires --input-dir")
         source = LocalFiles(args.input_dir, reader.glob)
     else:
-        raise ValueError(
-            "IRENE has no remote source configured; the DPC feed is not public. "
-            "Supply scans with --source local --input-dir."
+        operational = geotiff()
+        source = DpcRadarApi(
+            # The API's name for the product: SRI, the surface rain intensity.
+            product_type=config.remote_directory,
+            cache=args.cache_dir,
+            # The retry schedule is the runtime's; its key predates any source
+            # but FTP, and nothing in it is specific to that protocol.
+            retry=config.ftp,
+            filename=operational.filename,
+            verify=operational.validate,
         )
 
     bundle, artifacts = verify_bundle(config.artifacts, PLUGIN.bundle_roles)
@@ -125,7 +165,7 @@ def compose(args: argparse.Namespace) -> tuple[Deployment, str]:
 
 
 def parser():
-    return pipeline.parser(SLUG, NAME)
+    return pipeline.parser(SLUG, NAME, SOURCES)
 
 
 def run(args):
@@ -134,15 +174,18 @@ def run(args):
 
 
 def main(argv=None):
-    return pipeline.main(compose, SLUG, NAME, argv)
+    return pipeline.main(compose, SLUG, NAME, argv, SOURCES)
 
 
 def serve():
-    from nowcast_runtime import download_artifacts
+    """Fill the bundle, then forecast from every new scan until told to stop."""
+    from . import weights
 
+    # A default, not an override: the environment still decides when it is set.
+    os.environ.setdefault(service.POLL_INTERVAL_ENV, str(POLL_INTERVAL_SECONDS))
     return service.serve(
         NAME,
-        download=lambda: download_artifacts.main(["--bundle", str(Path("artifacts/v1"))]),
+        download=lambda: weights.main(["--bundle", BUNDLE]),
         poll=lambda: main(POLL_ARGS),
     )
 

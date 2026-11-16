@@ -1,3 +1,10 @@
+# IRENE as a long-running service: fill the weights bundle once, then forecast
+# from every new DPC radar scan. From this directory:
+#
+#   mkdir -p outputs && docker compose up -d --build
+#
+# Create outputs/ yourself first: a bind-mount directory Docker has to create
+# belongs to root, and the service does not run as root.
 services:
   irene:
     build:
@@ -7,8 +14,18 @@ services:
       dockerfile: models/irene/Dockerfile
     image: irene-nowcast:local
     restart: unless-stopped
-    stop_grace_period: 20m
-    env_file: .env
+    # A run takes well under a minute; this only has to outlast one.
+    stop_grace_period: 2m
+    # The owner of the two directories below, so forecasts land on the host
+    # owned by you. 1000 is the first user on most Linux hosts; set IRENE_UID
+    # and IRENE_GID (in the shell or in a .env file here) if yours differs.
+    user: "${IRENE_UID:-1000}:${IRENE_GID:-1000}"
+    environment:
+      # How often to ask the DPC API whether a new scan exists. Scans come
+      # every five minutes; an unchanged answer costs one small request.
+      NOWCAST_POLL_INTERVAL_SECONDS: "${NOWCAST_POLL_INTERVAL_SECONDS:-60}"
     volumes:
+      # manifest.json is in Git; irene.pt (257 MB) is written here on first
+      # start, extracted from the 770 MB checkpoint FBK publishes.
       - ./artifacts/v1:/app/artifacts/v1
       - ./outputs:/app/outputs
