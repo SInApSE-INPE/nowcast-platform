@@ -38,6 +38,8 @@ runs/
 *.ckpt
 *.safetensors
 *.onnx
+# A download interrupted before its atomic rename
+*.part
 
 # Secrets and local deployment files
 .env
