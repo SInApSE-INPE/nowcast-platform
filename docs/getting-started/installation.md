@@ -75,6 +75,14 @@ and model, so lint rules cannot drift between them.
 Some tests skip rather than fail, because they cannot run everywhere and a
 suite that always shows failures teaches people to ignore failures:
 
+`bundle files are not present` / `inceptionv4.pth is not present`
+: Weights are large and kept out of Git, so a fresh clone has none. Every test
+  that needs them skips and names the missing file. For InceptionV4, fetch them
+  with `uv run inceptionv4-download-artifacts` from `models/inceptionv4`; for
+  IRENE, with `uv run irene-download-artifacts --bundle artifacts/v1`
+  from `models/irene`. Only an *absent* file skips: one that is
+  present with the wrong checksum is still an error.
+
 `reference/ assets are not in the repository`
 : Two InceptionV4 tests compare against the supplied training reference, which
   is not redistributed. They run only where those files are present.

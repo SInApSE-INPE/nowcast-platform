@@ -106,7 +106,9 @@ usage: inceptionv4-nowcast [-h] --config CONFIG [--source {local,ftp}]
 : Debug logging, and a full traceback on failure.
 
 `--scheduled`
-: One idempotent poll. Requires `--source ftp` and no `--run-time`.
+: One idempotent poll. Requires a remote source (anything but `local`) and no
+  `--run-time`. The choices of `--source` are the deployment's own: InceptionV4
+  offers `ftp`, IRENE offers `dpc`.
 
 ### Exit codes
 

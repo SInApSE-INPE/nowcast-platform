@@ -92,8 +92,10 @@ These surface **before** any data is touched, which is deliberate.
   checkpoint.
 
 `Output values must be finite and nonnegative`
-: The sink refuses negatives. If your variable can legitimately be negative,
-  that sink is the wrong one.
+: The sink refuses negatives and non-finite values in any cell it is about to
+  publish. Masked cells are exempt, because they are written as NoData whatever
+  they hold. If your variable can legitimately be negative, that sink is the
+  wrong one.
 
 `Run already exists: ...`
 : A complete run is never overwritten. Use a different `--output-dir`, or
@@ -115,6 +117,12 @@ Compare a known coastline against the input, not against intuition.
 
 `symlinks unavailable on this platform`
 : A skip, not a failure. Windows needs a privilege or Developer Mode.
+
+`bundle files are not present: Artifact file is not present: ...`
+: A skip. The weights are not in Git and have not been downloaded or prepared
+  yet; the message names the file. Once it is there the checks run. A file that
+  is present but does not match the manifest is `Artifact checksum mismatch`,
+  and that one is an error.
 
 `reference/ assets are not in the repository`
 : A skip. Those tests need the supplied training reference, which is not

@@ -90,7 +90,8 @@ ago can still be explained.
   "units": "mm/h",
   "crs": "EPSG:4326",
   "grid": {"crs": "EPSG:4326", "west": -10.0, "north": 5.0, "...": "..."},
-  "device": "auto",
+  "device": "cpu",
+  "device_requested": "auto",
   "versions": {"nowcast-runtime": "0.3.0", "rainnet": "0.1.0", "numpy": "2.x"},
   "input_steps": 3,
   "input_offsets": [-7200.0, -3600.0, 0.0],
@@ -136,11 +137,17 @@ ago can still be explained.
 : How much of the field was NoData because of missing inputs. A rising value
   is a data-quality signal worth alerting on.
 
+`device`, `device_requested`
+: Where the run happened, and what was asked for. A request for `auto` is
+  resolved by the model, since only the model knows its framework, and the
+  manifest records the result: `cpu`, or `cuda:0`.
+
 ```{note}
-`device` records what was **requested**, not what was resolved. A run that
-asked for `auto` records `auto`, even though the model may have chosen CPU.
-Resolving that would need the predictor to report its device, which no port
-currently requires.
+The resolved value comes from an optional `device` attribute on the predictor.
+The port does not require it, so a predictor without one leaves `device` equal
+to `device_requested`, and a request for `auto` is then recorded as `auto`.
+Both shipped models and anything built on torch can expose it in one line:
+`self.device = device`.
 ```
 
 ## Idempotency

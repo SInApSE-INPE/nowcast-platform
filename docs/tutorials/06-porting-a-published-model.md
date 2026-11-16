@@ -75,14 +75,16 @@ models/irene/
 ├── src/irene_nowcast/
 │   ├── entrypoint.py                rewritten: composition root
 │   ├── model.py                     rewritten: predictor and transform
-│   ├── decoder.py                   new: the DPC NetCDF format
+│   ├── decoder.py                   new: the two DPC formats
+│   ├── source.py                    new: the DPC open-data API
+│   ├── weights.py                   new: shrink the checkpoint
 │   ├── stages.py                    new: the Threshold postprocess
 │   └── _vendor/                     new: upstream architecture, verbatim
 │       ├── LICENSE
 │       ├── model.py
 │       └── utils.py
 ├── tests/test_conformance.py        edited: realistic radar fields
-└── tools/prepare_artifacts.py       new: shrink the checkpoint
+└── tools/prepare_artifacts.py       new: the same, as a script
 ```
 
 ## 3. Shrink the checkpoint before it reaches production
@@ -91,8 +93,10 @@ Two thirds of the published file is optimizer state, schedulers and loop state.
 Keeping it means every deployment downloads and checksums 770 MB to run a
 257 MB model, and loads it with `weights_only=False` on every container start.
 
-`models/irene/tools/prepare_artifacts.py` does that conversion **once,
-offline**. From `models/irene/`:
+`models/irene/src/irene_nowcast/weights.py` does that conversion **once per
+bundle**, never on the inference path. It is in the package, with
+`tools/prepare_artifacts.py` as a thin script over it, because the container
+runs it on start to fill a bundle it was not built with. From `models/irene/`:
 
 ```bash
 uv run python tools/prepare_artifacts.py \
@@ -108,6 +112,15 @@ Extracted 40 tensors
 The resulting bundle holds tensors only, so the operational loader reads it
 with `weights_only=True`. The manifest records the digest of the source
 checkpoint, so the provenance chain back to the Hub is unbroken.
+
+That chain is also how anyone else gets the weights, which are not in Git.
+Given a bundle that already has its manifest, the same tool downloads the
+checkpoint the manifest names, refuses it unless the digest matches, and keeps
+the extracted weights only if they match too:
+
+```bash
+uv run python tools/prepare_artifacts.py --bundle artifacts/v1
+```
 
 ```{tip}
 Do this for any Lightning checkpoint. The unpickling that a training artefact
@@ -174,8 +187,9 @@ looked like a forecast. Computing the floor as
 
 ## 6. Write a decoder for the real format
 
-The DPC mosaic is NetCDF4, which is HDF5 underneath, so `h5py` reads it without
-the netCDF C library. The decoder is about ninety lines and implements
+The sample published beside the model is NetCDF4, which is HDF5 underneath, so
+`h5py` reads it without the netCDF C library. (The operational feed turned out
+to be GeoTIFF; that second decoder is [section 9](#going-operational).) The decoder is about ninety lines and implements
 `native_grid`, `units`, `observed_at`, `read`, plus the optional `filename` and
 `synthesize` that let conformance run on no real data.
 
@@ -193,17 +207,26 @@ produce numbers that are catastrophically wrong and perfectly plausible to a
 pipeline that does not check.
 ```
 
-```{admonition} The projection is not determinable
+```{admonition} The projection is not in the sample, and the first guess was wrong
 :class: warning
 
 The variable carries `grid_mapping = "crs"` and the file contains no such
-variable. The CRS is therefore an **assertion by configuration**, declared in
-one place and recorded in every manifest so it can be contradicted:
+variable. The port first **asserted** `EPSG:3003` (Monte Mario / Italy zone 1),
+declared in one place and recorded in every manifest so it could be
+contradicted. It was contradicted: the GeoTIFFs the DPC API serves, on the
+same 1200 × 1400 grid with the same origin, state a transverse Mercator
+centred on 42°N 12.5°E on WGS 84, which has no EPSG code. Every forecast
+written before that was georeferenced in the wrong place, and nothing failed.
 
 In `models/irene/src/irene_nowcast/entrypoint.py`:
 
-    ASSUMED_CRS = "EPSG:3003"
-    NATIVE_GRID = Grid(ASSUMED_CRS, -600000.0, 650000.0, 1000.0, 1000.0, 1200, 1400)
+    DPC_CRS = "+proj=tmerc +lat_0=42 +lon_0=12.5 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs"
+    NATIVE_GRID = Grid(DPC_CRS, -600000.0, 650000.0, 1000.0, 1000.0, 1200, 1400)
+
+The lesson is the reason the assertion was written down at all: a CRS nobody
+checked is a guess, and it stays one until a file that carries the answer says
+otherwise. The GeoTIFF decoder now compares each scan's own projection and
+transform with this grid and refuses a scan that disagrees.
 
 Coordinates in the file are cell centres, so the grid origin is half a cell
 beyond: x starts at -599500 and the origin is -600000.
@@ -307,6 +330,48 @@ And conformance:
 19 passed in 62.09s
 ```
 
+(going-operational)=
+## 9. Going operational
+
+The DPC serves the mosaic through an open API, with no account: one call names
+the newest product time, another exchanges a product type and a time for a
+short-lived pre-signed URL. That needed three things, all inside
+`models/irene/`:
+
+- **A source**, `source.py`. There is no directory to list, so it answers
+  "what exists" by asking for exactly the times the window needs. A time the
+  API does not have is left out, and the runtime then waits (`WAITING`)
+  instead of forecasting from a shorter history. The pre-signed URL carries
+  temporary credentials, so it stays in memory: the location recorded in the
+  manifest is the product type and time.
+- **A second decoder**, `RadarGeoTiff`, for what the API serves: one LZW
+  GeoTIFF per scan, with `-9999` outside radar coverage. Left alone,
+  `ClipNegative` would have turned that sentinel into "no rain"; the decoder
+  reports it as missing instead. `EitherFormat` lets the same deployment read
+  both formats, told apart by file name.
+- **The bundle on start.** `irene-serve` runs the extraction from section 3
+  before the first poll, so an image holds the manifest and no weights.
+
+From `models/irene/`:
+
+```bash
+mkdir -p outputs && docker compose up -d --build
+docker compose logs -f
+```
+
+```text
+INFO Starting IRENE with a 60-second poll interval
+irene.pt: already verified
+INFO NEW_DATA: processing 2026-11-16T22:50:00+00:00
+INFO Model ready on cpu; 6 input steps
+INFO Acquired 6 consecutive inputs ending at 2026-11-16T22:50:00+00:00
+INFO Published complete run: outputs/irene/dpc_sri/2026/11/16/2250Z
+INFO UP_TO_DATE: 2026-11-16T22:50:00+00:00 already completed
+```
+
+A scan appears about seven minutes after its nominal time, the service asks
+once a minute, and a run on four CPU threads takes under twenty seconds.
+
 ## What this cost the platform
 
 ### One runtime change
@@ -318,6 +383,15 @@ command line, which `pipeline.main` does not admit either.
 
 `Config` now carries unknown keys in `extra`. Additive, defaulted, no plugin
 changes: runtime 0.3.0 → 0.3.1.
+
+### A second one, on going operational
+
+`--source` accepted `local` or `ftp`, and a scheduled poll required `ftp` by
+name. IRENE's remote is an HTTP API, and calling it `ftp` to get past an
+argument check would have put a false protocol in every command line.
+`pipeline.parser` and `pipeline.main` now take the deployment's own `sources`,
+and the scheduler refuses only `local`. Additive and defaulted again: runtime
+0.3.1 → 0.3.2.
 
 ### Two conformance suite changes
 
@@ -332,8 +406,8 @@ and the round-trip check narrows to the range it claims.
 
 ### Nothing else
 
-The pipeline, the scheduler, the ports, the sink, the stages and the atomic
-publication needed no change at all. The five-minute step, the non-uniform
+The ports, the sink, the stages, the orchestration and the atomic publication
+needed no change at all. The five-minute step, the non-uniform
 window machinery, the ensemble member axis and the declared output width all
 worked the first time they met a model that actually used them.
 
@@ -343,7 +417,8 @@ worked the first time they met a model that actually used them.
 **No skill is demonstrated here.** One case, no scores, no baseline. The
 forecast looks reasonable beside the observation, and that is an anecdote.
 
-The CRS is asserted, not verified. Whether IRENE is useful over Italy is a
+The CRS is now read from the provider's own files, after a first assertion
+that was wrong. Whether IRENE is useful over Italy is a
 question for its authors and its own validation record, and nothing in this
 platform will answer it.
 ```
@@ -358,7 +433,7 @@ This was not hypothetical. Running on the real sample required splitting the
 cube into per-scan files first, outside the pipeline, because there is no way
 to express it inside.
 
-If the operational DPC feed publishes one file per five-minute scan, as this
-port assumes, it never matters. If it publishes cubes, this is the first
+The operational DPC feed publishes one file per five-minute scan, so there it
+never matters. For a provider that publishes cubes, this is the first
 genuinely missing port, and it would need either a source that explodes a cube
 into virtual observations or a `fetch` that can carry an index.

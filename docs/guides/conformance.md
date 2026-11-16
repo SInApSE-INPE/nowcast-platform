@@ -50,6 +50,12 @@ end-to-end conformance with **no real data at all**. A custom decoder without
 those two optional methods still gets every contract-level check; the
 end-to-end ones skip with a stated reason.
 
+What it cannot synthesize is the model's own bundle. If a file the manifest
+declares is absent, which is the normal state of a fresh clone because weights
+are not in Git, **every check skips** and names the missing file. A file that
+is present with the wrong checksum is still an error. Read a skipped suite as
+"not run", never as "passed".
+
 To use more plausible values, override one method:
 
 ```python
