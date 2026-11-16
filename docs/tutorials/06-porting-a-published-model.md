@@ -15,7 +15,7 @@ unlike the model this runtime grew around on every axis that matters:
 | Horizon | 6 leads | **12 leads** |
 | Output | deterministic | **ensemble, 10 members** |
 | Architecture | direct encoder-decoder | **recurrent ConvGRU** |
-| Source | GSMaP binary over FTP | radar NetCDF4 |
+| Source | GSMaP binary over FTP | **radar GeoTIFF over an HTTP API** |
 | Grid | 0.1° geographic | **1 km projected, in metres** |
 | Transform | log1p and z-score | Marshall-Palmer dBZ |
 | Bundle | checkpoint, mean, std | checkpoint only |
@@ -23,10 +23,13 @@ unlike the model this runtime grew around on every axis that matters:
 ```{admonition} The result, stated plainly
 :class: important
 
-IRENE runs, passes all nineteen conformance checks, and publishes 48
-georeferenced ensemble forecasts. Getting there required **one change to the
-runtime** and **two to the conformance suite**. All three are described below,
-because a platform that only reports its successes is not worth trusting.
+IRENE runs, passes all nineteen conformance checks, and now operates as a
+container that publishes 48 georeferenced ensemble forecasts for every new
+radar scan. Getting there required **two changes to the runtime** and **two to
+the conformance suite**, and it exposed **one mistake of the port's own**: a
+projection that was asserted, wrong, and published for a while. All five are
+described below, because a platform that only reports its successes is not
+worth trusting.
 ```
 
 ![Observed Italian radar against the IRENE ensemble mean at three lead times](../_static/irene-ensemble.png)
@@ -96,11 +99,12 @@ Keeping it means every deployment downloads and checksums 770 MB to run a
 `models/irene/src/irene_nowcast/weights.py` does that conversion **once per
 bundle**, never on the inference path. It is in the package, with
 `tools/prepare_artifacts.py` as a thin script over it, because the container
-runs it on start to fill a bundle it was not built with. From `models/irene/`:
+runs it on start to fill a bundle it was not built with. Making a new bundle
+from a checkpoint you already hold, from `models/irene/`:
 
 ```bash
-uv run python tools/prepare_artifacts.py \
-    --checkpoint /path/to/model.ckpt --bundle artifacts/v1
+uv run irene-download-artifacts \
+    --checkpoint /path/to/model.ckpt --bundle artifacts/v2
 ```
 
 ```text
@@ -119,13 +123,19 @@ checkpoint the manifest names, refuses it unless the digest matches, and keeps
 the extracted weights only if they match too:
 
 ```bash
-uv run python tools/prepare_artifacts.py --bundle artifacts/v1
+uv run irene-download-artifacts --bundle artifacts/v1
 ```
+
+The digest pinned for the weights is the one the locked torch produces. A
+different torch build can serialize the same tensors to different bytes, and
+the tool then stops with both digests rather than keep a file the manifest
+does not describe. The container builds from the same lock, which is why it
+reproduces the digest.
 
 ```{tip}
 Do this for any Lightning checkpoint. The unpickling that a training artefact
-requires is a code-execution path, and confining it to one offline step with a
-recorded digest is much better than repeating it in production.
+requires is a code-execution path, and confining it to one step, on a file
+whose digest is pinned, is much better than repeating it on every run.
 ```
 
 ## 4. Vendor only what you need
@@ -188,10 +198,12 @@ looked like a forecast. Computing the floor as
 ## 6. Write a decoder for the real format
 
 The sample published beside the model is NetCDF4, which is HDF5 underneath, so
-`h5py` reads it without the netCDF C library. (The operational feed turned out
-to be GeoTIFF; that second decoder is [section 9](#going-operational).) The decoder is about ninety lines and implements
-`native_grid`, `units`, `observed_at`, `read`, plus the optional `filename` and
-`synthesize` that let conformance run on no real data.
+`h5py` reads it without the netCDF C library. The decoder is about ninety
+lines and implements `native_grid`, `units`, `observed_at`, `read`, plus the
+optional `filename` and `synthesize` that let conformance run on no real data.
+
+The operational feed turned out to be GeoTIFF, not NetCDF. That second decoder
+came later and is described in [section 9](#going-operational).
 
 Two things in the published sample are worth recording rather than silently
 accommodating:
@@ -323,7 +335,7 @@ irene_20250828T2200Z_f001_m001_20250828T2205Z.tif
 ...
 ```
 
-And conformance:
+And conformance, which at this point was the project's whole test suite:
 
 ```text
 ...................                                                      [100%]
@@ -352,6 +364,72 @@ short-lived pre-signed URL. That needed three things, all inside
 - **The bundle on start.** `irene-serve` runs the extraction from section 3
   before the first poll, so an image holds the manifest and no weights.
 
+### A source without a listing
+
+A `Source` answers two questions: what exists, and give me this one. FTP
+answers the first with a directory listing. This API has none, so `candidates`
+asks about the window directly:
+
+```{code-block} python
+:caption: models/irene/src/irene_nowcast/source.py (abridged)
+
+def candidates(self, window, run_time):
+    anchor = run_time if run_time is not None else self.latest()
+    if anchor is None:
+        return []
+    entries = []
+    for moment in window.times(anchor):
+        name = self._filename(moment)
+        if (self._directory / name).is_file() or self._locate(moment) is not None:
+            entries.append((name, self._location(moment)))
+    return entries
+```
+
+Nothing else was needed for the scheduler to work. Its probe is a window of
+one observation, so the same method tells it whether anything new exists, and
+`select_window` already turns an absent time into `DataNotReady`. The port did
+not have to grow a "latest" method.
+
+`fetch` follows the built-in FTP source: download to a `.part` file, validate,
+rename into a cache keyed by source identity. Validation is the decoder's
+`validate`, which decodes the whole raster, so a truncated transfer is retried
+instead of cached.
+
+### The second decoder checks what the first one assumed
+
+```{code-block} python
+:caption: models/irene/src/irene_nowcast/decoder.py (abridged)
+
+elif not dataset.transform.almost_equals(self._transform()):
+    problem = "is not on the declared native grid origin and resolution"
+elif dataset.crs is None or dataset.crs != CRS.from_string(native.crs):
+    problem = f"declares a projection other than {native.crs}"
+```
+
+The wrong `EPSG:3003` of section 6 was found by reading the header of the
+first downloaded scan by hand. With this check in place the same mistake is
+refused at the first scan instead. A format that carries its own
+georeferencing should always be compared with the declared grid, because
+either side can be the one that is wrong.
+
+### Configuration
+
+Two keys of the runtime's own are reused rather than duplicated:
+
+```{code-block} json
+:caption: models/irene/config/default.json
+
+"remote_directory": "SRI",
+"ftp": { "timeout_seconds": 60, "attempts": 3,
+         "retry_delay_seconds": 30, "max_retry_delay_seconds": 120 }
+```
+
+`remote_directory` holds the API's name for the product, and `ftp` is the
+retry schedule, which has nothing FTP-specific in it. Both names predate any
+remote but FTP; renaming them is a breaking change this port did not justify.
+
+### Run it
+
 From `models/irene/`:
 
 ```bash
@@ -370,11 +448,29 @@ INFO UP_TO_DATE: 2026-11-16T22:50:00+00:00 already completed
 ```
 
 A scan appears about seven minutes after its nominal time, the service asks
-once a minute, and a run on four CPU threads takes under twenty seconds.
+once a minute, and a run on four CPU threads takes under twenty seconds. The
+same poll runs by hand, without Docker, as
+`uv run irene-nowcast --config config/default.json --source dpc --scheduled`.
+
+### Test it without the network
+
+The source takes its transport as a parameter, so its tests script the API's
+answers: a missing scan, an expired URL, a truncated transfer, a server error.
+None of them opens a socket. With the decoder tests, the project's suite is
+now 42 tests, 19 of them the shared conformance checks.
+
+```{warning}
+The documentation found for this API states neither a licence nor a rate
+limit. That is a question to settle with the provider before depending on the
+feed, and no amount of engineering on this side answers it. The
+[IRENE README](https://github.com/SInApSE-INPE/nowcast-platform/tree/main/models/irene)
+lists this beside the other operational notes: who owns the output files, and
+that nothing rotates them.
+```
 
 ## What this cost the platform
 
-### One runtime change
+### One runtime change, for the port
 
 `Config.load` called `cls(**payload)`, so **any key the runtime did not own was
 a TypeError**. IRENE needs two settings of its own, and the only alternatives
