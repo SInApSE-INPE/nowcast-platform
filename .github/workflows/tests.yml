@@ -1,0 +1,102 @@
+name: Tests
+
+# The runtime and each model resolve separately (ADR 0002), so they are checked
+# separately here too: one job for the shared runtime on every Python it
+# supports, one job per model against that model's own lock.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: Runtime (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.32"
+          enable-cache: true
+
+      - name: Install the runtime
+        run: uv sync --locked --python ${{ matrix.python }}
+
+      - name: Lint
+        # From the root, so the one ruff configuration covers every package
+        # and every model in a single pass.
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest
+
+  models:
+    name: Model (${{ matrix.model }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each model says how its bundle is obtained. Both are public, so
+          # both suites run for real rather than skipping.
+          - model: inceptionv4
+            # A ready bundle, downloaded file by file.
+            bundle: uv run inceptionv4-download-artifacts --bundle artifacts/v1
+          - model: irene
+            # No ready bundle is hosted: the weights are extracted from the
+            # 770 MB checkpoint FBK publishes, whose digest the manifest pins.
+            bundle: uv run irene-download-artifacts --bundle artifacts/v1
+    defaults:
+      run:
+        working-directory: models/${{ matrix.model }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.32"
+          enable-cache: true
+          cache-dependency-glob: models/${{ matrix.model }}/uv.lock
+
+      - name: Install the model
+        # No --python: the project's own .python-version decides, the same
+        # interpreter its Dockerfile builds on.
+        run: uv sync --locked
+
+      - name: Restore the verified bundle
+        uses: actions/cache@v4
+        with:
+          path: |
+            models/${{ matrix.model }}/artifacts/v1/*.pth
+            models/${{ matrix.model }}/artifacts/v1/*.pt
+          # The manifest pins every digest, so it is the whole cache identity.
+          key: bundle-${{ matrix.model }}-${{ hashFiles(format('models/{0}/artifacts/v1/manifest.json', matrix.model)) }}
+
+      - name: Fetch and verify the bundle
+        # A file already matching its checksum is left alone, so a cache hit
+        # costs one hash. A failure here fails the job: the tests must not
+        # quietly fall back to skipping.
+        run: ${{ matrix.bundle }}
+
+      - name: Test
+        # -rs prints every skip with its reason, so a suite that skipped is
+        # visible in the log rather than passing for a suite that ran.
+        run: uv run pytest -rs

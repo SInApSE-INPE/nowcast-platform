@@ -1,11 +1,10 @@
 name: Documentation
 
-# Deploys to GitHub Pages. While the platform work lives on develop, that
-# branch publishes too, so the site can be reviewed before anything reaches
-# main. Remove develop from the push trigger once main is the source of truth.
+# Deploys to GitHub Pages from main. A pull request builds the site, so a
+# broken page is caught in review, but publishes nothing.
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "docs/**"
       - "packages/**"
