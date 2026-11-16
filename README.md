@@ -3,7 +3,7 @@
 Operational infrastructure for publishing gridded nowcasts on a schedule, with
 auditable provenance, and the models that run on it.
 
-**[Read the documentation](https://sinapse-inpe.github.io/ainpp-pb-latam-nowcast-inceptionv4/)**
+**[Read the documentation](https://sinapse-inpe.github.io/nowcast-platform/)**
 — tutorials, concepts, and a reference. Build it locally with
 `uv sync --group docs && uv run --group docs sphinx-build -b html docs docs/_build/html`.
 

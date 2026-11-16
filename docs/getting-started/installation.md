@@ -16,8 +16,8 @@ or none at all.
 ## Clone and set up
 
 ```bash
-git clone https://github.com/SInApSE-INPE/ainpp-pb-latam-nowcast-inceptionv4.git
-cd ainpp-pb-latam-nowcast-inceptionv4
+git clone https://github.com/SInApSE-INPE/nowcast-platform.git
+cd nowcast-platform
 uv sync
 ```
 
