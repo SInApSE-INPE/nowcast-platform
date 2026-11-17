@@ -1,0 +1,88 @@
+name: Images
+
+# Build each model's container and publish it to the GitHub Container Registry,
+# so a deployment is `docker pull` and needs no clone and no build.
+on:
+  push:
+    branches: [main]
+    # Only what ends up in an image: the model, the runtime it installs, and
+    # this file.
+    paths:
+      - "models/irene/**"
+      - "packages/nowcast-runtime/**"
+      - ".github/workflows/images.yml"
+  workflow_dispatch:
+
+# Read-only by default; publishing a package is the one thing this adds.
+permissions:
+  contents: read
+  packages: write
+
+# Two pushes in quick succession must not race for the `latest` tag.
+concurrency:
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish (${{ matrix.model }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - model: irene
+            package: irene_nowcast
+            image: irene-nowcast
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the model version
+        id: version
+        # The version the model reports in its run manifests, so an image tag
+        # and a manifest name the same thing.
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' \
+            "models/${{ matrix.model }}/src/${{ matrix.package }}/__init__.py")
+          test -n "$version"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Describe the image
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # The action lowercases the owner, which a registry path requires.
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          # `latest` moves with main; the version and the commit do not, so a
+          # deployment that must not change pins one of those.
+          tags: |
+            type=raw,value=latest
+            type=raw,value=${{ steps.version.outputs.value }}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.version=${{ steps.version.outputs.value }}
+
+      - name: Build and publish
+        uses: docker/build-push-action@v6
+        with:
+          # The workspace root: the runtime is a path dependency of the model.
+          context: .
+          file: models/${{ matrix.model }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          # Includes the source label that links the package to this repository.
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.model }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.model }}

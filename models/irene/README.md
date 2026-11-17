@@ -15,6 +15,27 @@ what it cost the platform, is written up in
 
 ## Run it operationally, in Docker
 
+### From the published image
+
+Nothing to clone or build. The image is published to the GitHub Container
+Registry on every change to `main`:
+
+```bash
+mkdir -p outputs
+docker run -d --name irene --restart unless-stopped \
+    --user "$(id -u):$(id -g)" \
+    -v irene-artifacts:/app/artifacts/v1 \
+    -v "$PWD/outputs:/app/outputs" \
+    ghcr.io/sinapse-inpe/irene-nowcast:latest
+docker logs -f irene
+```
+
+The named volume keeps the weights, so they are downloaded once rather than on
+every new container. `latest` follows `main`; to pin a deployment, use the
+model version (`:0.1.0`) or a commit (`:sha-<short>`).
+
+### From this repository
+
 From `models/irene`:
 
 ```bash
