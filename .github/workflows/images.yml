@@ -76,9 +76,12 @@ jobs:
             type=raw,value=latest
             type=raw,value=${{ steps.version.outputs.value }}
             type=sha,format=short
-          # Title, description and the link to the model's own page come from
-          # the Dockerfile, which is where the attribution is written.
+          # Title and description are set here as well as in the Dockerfile:
+          # this action otherwise fills them from the repository, and its
+          # labels win over the Dockerfile's.
           labels: |
+            org.opencontainers.image.title=${{ matrix.image }}
+            org.opencontainers.image.description=${{ matrix.description }}
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
             org.opencontainers.image.url=${{ matrix.upstream }}
           # The registry page shows a description only from an annotation on
