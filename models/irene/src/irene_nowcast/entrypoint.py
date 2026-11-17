@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 from dataclasses import replace
 from datetime import timedelta
@@ -29,6 +30,12 @@ CONFIG = "config/default.json"
 BUNDLE = "artifacts/v1"
 # `dpc` is the DPC open-data API; there is no FTP feed for this product.
 SOURCES = ("local", "dpc")
+# Said at every start: the model is someone else's work, and this is a test.
+NOTICE = (
+    "IRENE is an existing model by Fondazione Bruno Kessler, published at "
+    "https://huggingface.co/it4lia/irene. This deployment is a test of the "
+    "nowcast-platform workflow, not an official distribution of the model."
+)
 # A scan is published about seven minutes after its nominal time and replaced
 # by the next one five minutes later, so a window an hour old means the feed
 # has stalled, and forecasting from it would be issuing the past.
@@ -181,6 +188,10 @@ def serve():
     """Fill the bundle, then forecast from every new scan until told to stop."""
     from . import weights
 
+    # Configured here, in the format the service uses, so the notice is the
+    # first line of the container log rather than lost before logging exists.
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    logging.getLogger(__name__).info(NOTICE)
     # A default, not an override: the environment still decides when it is set.
     os.environ.setdefault(service.POLL_INTERVAL_ENV, str(POLL_INTERVAL_SECONDS))
     return service.serve(

@@ -18,6 +18,13 @@ FROM python:3.12-slim-bookworm
 # LOGNAME: some libraries call getpass.getuser() while importing, which falls
 # back to an /etc/passwd lookup. This image runs under an arbitrary host UID, so
 # no baked passwd entry can cover it; getpass reads LOGNAME first.
+# Stated on the image itself, so it travels with every copy of it.
+LABEL org.opencontainers.image.title="irene-nowcast" \
+      org.opencontainers.image.description="Workflow test of nowcast-platform running IRENE, an existing model by Fondazione Bruno Kessler published at https://huggingface.co/it4lia/irene. Not an official distribution of the model." \
+      org.opencontainers.image.url="https://huggingface.co/it4lia/irene" \
+      org.opencontainers.image.documentation="https://github.com/SInApSE-INPE/nowcast-platform/tree/main/models/irene" \
+      org.opencontainers.image.source="https://github.com/SInApSE-INPE/nowcast-platform"
+
 ENV PATH=/opt/venv/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "irene-nowcast"
 version = "0.1.0"
-description = "IRENE operational nowcasting"
+description = "Workflow test running the existing IRENE model (FBK, huggingface.co/it4lia/irene) on nowcast-runtime"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
 dependencies = [

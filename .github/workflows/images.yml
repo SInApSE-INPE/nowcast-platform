@@ -35,6 +35,12 @@ jobs:
           - model: irene
             package: irene_nowcast
             image: irene-nowcast
+            upstream: https://huggingface.co/it4lia/irene
+            description: >-
+              Workflow test of nowcast-platform running IRENE, an existing
+              model by Fondazione Bruno Kessler published at
+              https://huggingface.co/it4lia/irene. Not an official
+              distribution of the model.
     steps:
       - uses: actions/checkout@v4
 
@@ -70,9 +76,17 @@ jobs:
             type=raw,value=latest
             type=raw,value=${{ steps.version.outputs.value }}
             type=sha,format=short
+          # Title, description and the link to the model's own page come from
+          # the Dockerfile, which is where the attribution is written.
           labels: |
-            org.opencontainers.image.title=${{ matrix.image }}
             org.opencontainers.image.version=${{ steps.version.outputs.value }}
+            org.opencontainers.image.url=${{ matrix.upstream }}
+          # The registry page shows a description only from an annotation on
+          # the image index, which a label does not reach.
+          annotations: |
+            org.opencontainers.image.description=${{ matrix.description }}
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest,index
 
       - name: Build and publish
         uses: docker/build-push-action@v6
@@ -84,5 +98,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           # Includes the source label that links the package to this repository.
           labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
           cache-from: type=gha,scope=${{ matrix.model }}
           cache-to: type=gha,mode=max,scope=${{ matrix.model }}

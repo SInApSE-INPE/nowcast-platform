@@ -1,5 +1,12 @@
 # IRENE — ensemble radar nowcasting on the DPC mosaic
 
+> **This is a workflow test, not a new model.** IRENE (Italian Radar Ensemble
+> Nowcasting Experiment) is an existing model, developed at Fondazione Bruno
+> Kessler (FBK) and published at <https://huggingface.co/it4lia/irene>. This
+> package only runs it, unmodified, to exercise the `nowcast-platform`
+> operational workflow. All credit for the model belongs to its authors; see
+> [Attribution](#attribution).
+
 [IRENE](https://huggingface.co/it4lia/irene) is a ConvGRU ensemble nowcaster
 from Fondazione Bruno Kessler, trained on the Italian DPC radar mosaic and
 published under BSD 2-Clause. This project runs it on the shared
@@ -189,6 +196,34 @@ that produced them.
 | `missing_policy` | `zero_rain` | Gaps are fed to the model as no rain and masked as NoData in the output. |
 | `ensemble_members` | `4` | Members per lead. The model was published with 10. |
 | `seed` | `20260101` | Members come from fresh noise, so an unseeded run is not reproducible. `null` leaves it unseeded. |
+
+## Attribution
+
+The model is **not** a product of this repository.
+
+- **Model:** IRENE — Italian Radar Ensemble Nowcasting Experiment.
+- **Authors:** developed at Fondazione Bruno Kessler (FBK), Trento, Italy, and
+  published by the Italian AI Factory (IT4LIA).
+- **Source:** <https://huggingface.co/it4lia/irene>. The weights are downloaded
+  from there at run time and are not redistributed here.
+- **License:** BSD 2-Clause, © 2026 Data Science for Industry and Physics @
+  FBK. The architecture code in `src/irene_nowcast/_vendor/` is copied verbatim
+  from the published package, with that licence beside it.
+- **Data:** the radar mosaic is produced by the Italian Dipartimento della
+  Protezione Civile (DPC).
+
+What this repository adds is only the operational wrapping: acquisition,
+scheduling, export, provenance and the container. It is a test of that
+workflow on an existing model. It is not an official distribution of IRENE, it
+is not endorsed by its authors, and forecasts it produces are not a validated
+product.
+
+The model card gives no paper or citation entry at the time of writing. If you
+use the model, cite it as its authors ask on the model card, and refer to the
+model card itself until they publish one:
+
+> Fondazione Bruno Kessler. *IRENE — Italian Radar Ensemble Nowcasting
+> Experiment*. IT4LIA AI Factory. <https://huggingface.co/it4lia/irene>
 
 ## What is not settled
 
